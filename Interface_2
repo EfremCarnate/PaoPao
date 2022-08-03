@@ -1,0 +1,79 @@
+using DFTK 
+using LinearAlgebra 
+using BenchmarkTools
+""" 
+Define a struct such that energy calculations can be performed using 
+DFT. The struct in this case will define fields/variables that are 
+not changing within the simulation. 
+"""
+struct DFTPotential #<:AbstractPotential, needs to be a subtype of AbstractPotential 
+    a::Float64                    #Assign "a" as the box length 
+    lattice::Mat3                 #Assign "lattice" as a 3x3 matrix, which is the box 
+    El::ElementPsp                #Assign "El" as the atom type and pseudopotential 
+    atoms::Vector                 #Assign "atoms" as the vector of atoms needed
+    functional::Vector{Symbol}    #Assign "functional" as the functional type
+    n_atoms::Int                  #Assign "n_atoms" as the number of atoms used to generate "atoms" 
+    kgrid::Vector                 #Assign "kgrid" as the Monkhurst-Pack grid 
+    Ecut::Int                     #Assign "Ecut" as the energy cutoff. 
+end   
+""" 
+Now we define a function such that we generate fixed fields 
+for the DFTPotential. That is, we want to create specific field 
+parameters that are not changing within the simulation. 
+"""
+function DFTPotential(a, n_atoms)#; kgrid = [1,1,1], Ecut = 6) 
+    kgrid = [1, 1, 1] 
+    Ecut = 5
+    lattice = a * I(3) 
+    El = ElementPsp(:Ga, psp=load_psp("hgh/pbe/ga-q3")) 
+    atoms = Vector{ElementPsp}(undef,n_atoms)
+    for i in 1:n_atoms 
+        atoms[i] = El 
+    end  
+    functional = [:gga_x_pbe, :gga_c_pbe] 
+    return DFTPotential(a, lattice, El, atoms, functional, n_atoms, kgrid, Ecut)
+end  
+""" 
+We are now at a point in which we can create a function that uses 
+the DFTPotential struct in order to obtain the total energy of any 
+configuration, for any number of atoms. We have to make sure we 
+call the appropriate field names with pot._ 
+"""
+#function get1(pot::DFTPotential, config) 
+    #config = config / pot.a 
+    #return config 
+#end 
+
+function get_energy(pot::DFTPotential, config) 
+    config = config / pot.a 
+    model = model_DFT(pot.lattice, pot.atoms, config, pot.functional)
+    basis = PlaneWaveBasis(model; pot.Ecut, pot.kgrid) 
+    scfres = self_consistent_field(basis; tol = 1e-7, callback=info->nothing) 
+    return scfres.energies.total 
+end 
+
+function energy_update(config1, config2, pot::DFTPotential) 
+    delta_E = get_energy(pot, config2) - get_energy(pot, config1) 
+    return delta_E 
+end 
+
+pot = DFTPotential(14.44,12) 
+config = [[0.000968, -0.735658, -2.448964], 
+          [-2.012798, -1.522479, -0.814074], 
+          [-1.732366, 1.112479, -1.641393], 
+          [0.946136, 1.733948, -1.739984], 
+          [2.293939, -0.475975, -0.933625], 
+          [0.482849, -2.482840, -0.374164], 
+          [-0.000472, 0.735892, 2.449197], 
+          [2.012866, 1.522774, 0.813977], 
+          [1.732373, -1.112540, 1.640889], 
+          [-0.945902, -1.733528, 1.740266], 
+          [-2.294086, 0.475728, 0.933702], 
+          [-0.483507, 2.482200, 0.374172]]  
+
+config = config * 1.8897259886 
+@btime E = get_energy($pot, $config)  
+E0 = -4.199221981785817 
+BE = abs(E - (6*E0)) #binding energy
+BE = BE / 12 
+BE = BE * 27.211396641308 
